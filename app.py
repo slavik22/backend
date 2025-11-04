@@ -61,7 +61,7 @@ def create_app():
     #
     CORS(
         app,
-        resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000"]}},
+        resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000", "https://backend-1055266214449.europe-west1.run.app"]}},
         supports_credentials=True,
         allow_headers=["Content-Type", "Authorization"],
         expose_headers=["Authorization"]
@@ -70,6 +70,8 @@ def create_app():
     app.config["GOOGLE_CLIENT_ID"] = os.getenv("GOOGLE_CLIENT_ID")
 
     db.init_app(app)
+    with app.app_context():
+        db.create_all()
     # login_manager.init_app(app)  # можна залишити/прибрати; не використовується для доступу
     jwt = JWTManager(app)
 
@@ -802,6 +804,4 @@ app = create_app()
 
 
 if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
     app.run(debug=True)
