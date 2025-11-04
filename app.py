@@ -62,7 +62,8 @@ def create_app():
     CORS(
         app,
         resources={r"/*": {"origins": ["http://localhost:3000", "http://127.0.0.1:3000", "https://backend-1055266214449.europe-west1.run.app"]}},
-        supports_credentials=True,
+        supports_credentials=False,
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization"],
         expose_headers=["Authorization"]
     )
