@@ -13,4 +13,4 @@ COPY . .
 
 # Cloud Run provides PORT; bind gunicorn to it
 ENV PORT=8080
-CMD ["gunicorn", "-w", "4", "-k", "gthread", "-b", "0.0.0.0:8080", "app:app"]
+CMD ["gunicorn","-w","4","-k","gthread","--threads","4","--timeout","120","--max-requests","2000","--max-requests-jitter","200","--access-logfile","-","-b","0.0.0.0:8080","app:app"]
