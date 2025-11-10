@@ -27,3 +27,10 @@ class Config:
             "SQLALCHEMY_DATABASE_URI",
             f"postgresql+pg8000://{_db_user}:{_db_pass}@127.0.0.1:5432/{_db_name}"
         )
+
+        SQLALCHEMY_ENGINE_OPTIONS = {
+            "pool_size": 20,
+            "max_overflow": 10,
+            "pool_timeout": 30,
+            "pool_recycle": 1800
+        }

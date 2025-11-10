@@ -6,7 +6,7 @@ import { randomString } from "https://jslib.k6.io/k6-utils/1.2.0/index.js";
 http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 
 // const BASE_URL = __ENV.BASE_URL || "http://127.0.0.1:5000";
-const BASE_URL = "https://backend-1055266214449.europe-west1.run.app";;
+const BASE_URL = "https://backend-1055266214449.europe-west1.run.app";
 
 
 const TEST_VUS = Number(__ENV.TEST_VUS) || 10;
