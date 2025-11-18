@@ -463,9 +463,9 @@ def create_app():
             msg.verify(signature, nonce=nonce)
 
             # Додаткові перевірки безпеки
-            expected_domain = request.host.split(":")[0]
-            if msg.domain != expected_domain:
-                return jsonify({"ok": False, "error": "invalid_domain"}), 401
+            # expected_domain = request.host.split(":")[0]
+            # if msg.domain != expected_domain:
+            #     return jsonify({"ok": False, "error": "invalid_domain"}), 401
 
             # Можна перевірити chainId, якщо хочеш
             # if msg.chain_id != 1: ...

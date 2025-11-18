@@ -8,6 +8,8 @@ class Config:
     JWT_REFRESH_TOKEN_EXPIRES = timedelta(days=7)
     JWT_TOKEN_LOCATION = ["headers"]
     SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-prod")
+    SESSION_COOKIE_SAMESITE = "None"
+    SESSION_COOKIE_SECURE = True  # обовʼязково на HTTPS у проді
 
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
@@ -22,10 +24,8 @@ class Config:
             f"@/{_db_name}?unix_sock=/cloudsql/{_icn}/.s.PGSQL.5432"
         )
     else:
-        # Local dev (adjust host/port)
-        SQLALCHEMY_DATABASE_URI = os.getenv(
-            "SQLALCHEMY_DATABASE_URI",
-            f"postgresql+pg8000://{_db_user}:{_db_pass}@127.0.0.1:5432/{_db_name}"
+        SQLALCHEMY_DATABASE_URI = (
+            f"postgresql://postgres:Password1!@34.116.132.160:5432/web3jobs?sslmode=require"
         )
 
         SQLALCHEMY_ENGINE_OPTIONS = {
