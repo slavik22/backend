@@ -1,0 +1,209 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "public endpoints": {
+                "name": "public endpoints",
+                "path": "::public endpoints",
+                "id": "27d0d78932efe4d904c9f2666b9fc44d",
+                "groups": {},
+                "checks": {
+                        "root: status 200": {
+                            "passes": 186,
+                            "fails": 0,
+                            "name": "root: status 200",
+                            "path": "::public endpoints::root: status 200",
+                            "id": "e2696b693633394fd12277ff1de83736"
+                        },
+                        "about: status 200": {
+                            "name": "about: status 200",
+                            "path": "::public endpoints::about: status 200",
+                            "id": "16bdbc8b67011e887ce511b81582c57b",
+                            "passes": 186,
+                            "fails": 0
+                        },
+                        "jobs list: status 200": {
+                            "id": "fb18fccef1e01eb9f60d54fe94166a27",
+                            "passes": 186,
+                            "fails": 0,
+                            "name": "jobs list: status 200",
+                            "path": "::public endpoints::jobs list: status 200"
+                        }
+                    }
+            },
+            "job detail & optional apply": {
+                "groups": {},
+                "checks": {
+                        "job detail: 200": {
+                            "name": "job detail: 200",
+                            "path": "::job detail & optional apply::job detail: 200",
+                            "id": "566e62debd31c956890eef451df286fb",
+                            "passes": 186,
+                            "fails": 0
+                        },
+                        "apply: status 201 or 409 or 200": {
+                            "id": "ead7f04130c7b8e2d5273da55800dd31",
+                            "passes": 186,
+                            "fails": 0,
+                            "name": "apply: status 201 or 409 or 200",
+                            "path": "::job detail & optional apply::apply: status 201 or 409 or 200"
+                        }
+                    },
+                "name": "job detail & optional apply",
+                "path": "::job detail & optional apply",
+                "id": "79168c5b436c507a82f90a0043fd7cea"
+            },
+            "auth flows (login refresh)": {
+                "name": "auth flows (login refresh)",
+                "path": "::auth flows (login refresh)",
+                "id": "1b8b671ddc1ba06a0c650e61aa95f8d2",
+                "groups": {},
+                "checks": {
+                        "me: ok": {
+                            "path": "::auth flows (login refresh)::me: ok",
+                            "id": "790426d30766574eacc42370c6199fcd",
+                            "passes": 186,
+                            "fails": 0,
+                            "name": "me: ok"
+                        }
+                    }
+            }
+        },
+        "checks": {}
+    },
+    "metrics": {
+        "vus": {
+            "value": 1,
+            "min": 1,
+            "max": 10
+        },
+        "http_req_receiving": {
+            "max": 2.312,
+            "p(90)": 0.12,
+            "p(95)": 0.21734999999999954,
+            "avg": 0.09203667262969616,
+            "min": 0.018,
+            "med": 0.049
+        },
+        "checks": {
+            "passes": 1116,
+            "fails": 0,
+            "value": 1
+        },
+        "group_duration": {
+            "p(90)": 45.240970600000004,
+            "p(95)": 58.19953739999999,
+            "avg": 27.484289125448022,
+            "min": 3.079,
+            "med": 23.648125,
+            "max": 284.360541
+        },
+        "iteration_duration": {
+            "med": 1707.531063,
+            "max": 2746.149917,
+            "p(90)": 2385.1147295,
+            "p(95)": 2488.94301,
+            "avg": 1661.4393944408596,
+            "min": 618.006708
+        },
+        "http_req_duration": {
+            "avg": 13.643478533094825,
+            "min": 0.456,
+            "med": 10.4495,
+            "max": 333.005,
+            "p(90)": 22.4126,
+            "p(95)": 28.742049999999995,
+            "thresholds": {
+                "p(95)<1000": false
+            }
+        },
+        "data_received": {
+            "count": 1727346,
+            "rate": 53274.1675712774
+        },
+        "vus_max": {
+            "value": 10,
+            "min": 10,
+            "max": 10
+        },
+        "http_req_duration{expected_response:true}": {
+            "p(90)": 22.4126,
+            "p(95)": 28.742049999999995,
+            "avg": 13.643478533094825,
+            "min": 0.456,
+            "med": 10.4495,
+            "max": 333.005
+        },
+        "http_reqs": {
+            "count": 1118,
+            "rate": 34.48094321849133
+        },
+        "http_req_blocked": {
+            "p(90)": 0.4383,
+            "p(95)": 0.5607499999999997,
+            "avg": 0.28549016100178964,
+            "min": 0.101,
+            "med": 0.228,
+            "max": 5.554
+        },
+        "data_sent": {
+            "count": 273014,
+            "rate": 8420.196987346326
+        },
+        "http_req_sending": {
+            "min": 0.006,
+            "med": 0.02,
+            "max": 0.475,
+            "p(90)": 0.048,
+            "p(95)": 0.063,
+            "avg": 0.02975760286225399
+        },
+        "iterations": {
+            "count": 186,
+            "rate": 5.736543326153299
+        },
+        "http_req_connecting": {
+            "avg": 0.236484794275492,
+            "min": 0.089,
+            "med": 0.194,
+            "max": 2.702,
+            "p(90)": 0.3643,
+            "p(95)": 0.464
+        },
+        "req_duration_ms": {
+            "avg": 13.358247311827963,
+            "min": 0.456,
+            "med": 10.4335,
+            "max": 215.878,
+            "p(90)": 22.4005,
+            "p(95)": 28.333749999999974
+        },
+        "http_req_waiting": {
+            "avg": 13.521684257602875,
+            "min": 0.425,
+            "med": 10.3795,
+            "max": 332.549,
+            "p(90)": 22.267400000000002,
+            "p(95)": 28.15399999999998
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 1118,
+            "value": 0
+        },
+        "http_req_tls_handshaking": {
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0
+        }
+    },
+    "setup_data": {
+        "jobId": 4,
+        "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTc2Mjc4MzQxMCwianRpIjoiNTM3ODA2OGQtM2VjMS00MjQ4LWI0M2UtMmVlMjc2ZDBiOTZmIiwidHlwZSI6ImFjY2VzcyIsInN1YiI6IjE0IiwibmJmIjoxNzYyNzgzNDEwLCJjc3JmIjoiNTZlNDE2NzMtOTY3Ni00OThiLWIwN2QtMzNiYzg5YjQyOTNmIiwiZXhwIjoxNzYyNzg0MzEwfQ.vhIA--UXt4NaFmPIOadZ-dZI6ls3ViQY74ZezPlw6Cg"
+    }
+}

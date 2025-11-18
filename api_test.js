@@ -9,7 +9,7 @@ http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
 const BASE_URL = "https://backend-1055266214449.europe-west1.run.app";
 
 
-const TEST_VUS = Number(__ENV.TEST_VUS) || 10;
+const TEST_VUS = Number(__ENV.TEST_VUS) || 20;
 const TEST_DURATION = __ENV.TEST_DURATION || "20s";
 const USER_PREFIX = __ENV.USER_PREFIX || "k6user";
 const REGISTERED_USER_EMAIL = __ENV.REGISTERED_USER_EMAIL || ""; // optional: test against existing user

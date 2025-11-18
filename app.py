@@ -2,12 +2,13 @@ import os
 import secrets
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
+from flasgger import Swagger
 
 from eth_typing import ValidationError
 from eth_utils import to_checksum_address
 from flask import Flask, jsonify, request, session
 from flask_cors import CORS
-from siwe import generate_nonce, SiweMessage
+from siwe import generate_nonce, SiweMessage, VerificationError
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from config import Config
@@ -68,6 +69,35 @@ def create_app():
         expose_headers=["Authorization"]
     )
 
+    app.config["SWAGGER"] = {
+        "title": "web3jobs API",
+        "uiversion": 3,
+    }
+
+    swagger_template = {
+        "swagger": "2.0",
+        "info": {
+            "title": "web3jobs API",
+            "description": "API документація для web3jobs",
+            "version": "1.0.0"
+        },
+        "securityDefinitions": {
+            "Bearer": {
+                "type": "apiKey",
+                "name": "Authorization",
+                "in": "header",
+                "description": "JWT в заголовку Authorization. Наприклад: \"Bearer eyJ...\""
+            }
+        }
+        # Можна ще глобально задати security, але не обовʼязково:
+        # "security": [
+        #     {"Bearer": []}
+        # ]
+    }
+
+    Swagger(app, template=swagger_template)
+
+
     app.config["GOOGLE_CLIENT_ID"] = os.getenv("GOOGLE_CLIENT_ID")
 
     db.init_app(app)
@@ -106,8 +136,30 @@ def create_app():
         return jsonify({"ok": False, "error": "token_expired"}), 401
 
     # ---------------- Public routes ----------------
+
+
     @app.get("/")
     def root():
+        """
+        Get landing data (recent jobs and stats)
+        ---
+        tags:
+          - Public
+        responses:
+          200:
+            description: Останні активні вакансії та статистика
+            schema:
+              type: object
+              properties:
+                ok:
+                  type: boolean
+                jobs:
+                  type: array
+                  items:
+                    type: object
+                stats:
+                  type: object
+        """
         jobs = Job.query.filter_by(is_active=True).order_by(Job.created_at.desc()).limit(10).all()
         stats = {
             "total_jobs": Job.query.filter_by(is_active=True).count(),
@@ -118,11 +170,60 @@ def create_app():
 
     @app.get("/about")
     def about():
+        """
+        Get API info
+        ---
+        tags:
+          - Public
+        responses:
+          200:
+            description: Інформація про API
+            schema:
+              type: object
+              properties:
+                ok:
+                  type: boolean
+                app:
+                  type: string
+                version:
+                  type: string
+        """
         return jsonify({"ok": True, "app": "web3jobs-api", "version": "1.0"})
 
     # ---------------- JWT Auth ----------------
     @app.post("/auth/register")
     def auth_register():
+        """
+        Register user with email/password
+        ---
+        tags:
+          - Auth
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+                role:
+                  type: string
+                  enum: [user, recruiter, admin]
+                wallet_address:
+                  type: string
+        responses:
+          201:
+            description: Користувача створено
+          400:
+            description: Некоректні дані
+          409:
+            description: Email вже існує
+        """
         data = request.get_json(force=True) or {}
         email = data.get("email")
         password = data.get("password")
@@ -152,6 +253,30 @@ def create_app():
 
     @app.post("/auth/login")
     def auth_login():
+        """
+         Login with email/password
+         ---
+         tags:
+           - Auth
+         consumes:
+           - application/json
+         parameters:
+           - in: body
+             name: body
+             required: true
+             schema:
+               type: object
+               properties:
+                 email:
+                   type: string
+                 password:
+                   type: string
+         responses:
+           200:
+             description: Успішний логін, повертаються JWT токени
+           401:
+             description: Невірні облікові дані
+         """
         data = request.get_json(force=True) or {}
         email = data.get("email")
         password = data.get("password")
@@ -164,6 +289,19 @@ def create_app():
     @app.post("/auth/refresh")
     @jwt_required(refresh=True)
     def auth_refresh():
+        """
+        Refresh access token
+        ---
+        tags:
+          - Auth
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Новий access токен
+          404:
+            description: Користувача не знайдено
+        """
         uid = get_jwt_identity()  # <- рядок
         user = User.query.get(int(uid))  # <- приводимо назад до int
         if not user:
@@ -177,8 +315,33 @@ def create_app():
     @app.post("/auth/google")
     def auth_google():
         """
-        Accepts {"credential": "<google_id_token>", "role": "user"|"recruiter" (optional)}
-        Verifies it, upserts user, returns our JWT access/refresh + user payload
+        Login / Register via Google OAuth (id_token)
+        ---
+        tags:
+          - Auth
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                credential:
+                  type: string
+                  description: Google ID token (JWT)
+                role:
+                  type: string
+                  enum: [user, recruiter]
+                  description: Бажана роль (опційно)
+        responses:
+          200:
+            description: Успішний логін, повертаються JWT токени
+          400:
+            description: Некоректний або неповний токен
+          401:
+            description: Валідація Google токена не пройшла
         """
         data = request.get_json(force=True) or {}
         credential = data.get("credential")
@@ -232,9 +395,130 @@ def create_app():
             # Don't leak internals; log e if needed
             return jsonify({"ok": False, "message": "Google verification failed"}), 401
 
+    @app.get("/auth/siwe/nonce")
+    def siwe_nonce():
+        """
+        Get nonce for SIWE (Sign-In with Ethereum)
+        """
+        # якщо nonce вже є в сесії — віддаємо його,
+        # а не генеруємо новий
+        nonce = session.get("siwe_nonce")
+        if not nonce:
+            nonce = generate_nonce()
+            session["siwe_nonce"] = nonce
+        return jsonify({"ok": True, "nonce": nonce})
+
+    @app.post("/auth/siwe/verify")
+    def siwe_verify():
+        """
+        Login/Register via crypto wallet (SIWE)
+        ---
+        tags:
+          - Auth
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  description: SIWE message (EIP-4361)
+                signature:
+                  type: string
+                  description: Signed SIWE message
+                role:
+                  type: string
+                  enum: [user, recruiter]
+                  description: Бажана роль (опційно, тільки для нового акаунту)
+        responses:
+          200:
+            description: Успішний логін, повертаються JWT токени
+          400:
+            description: Некоректні дані / nonce
+          401:
+            description: Валідація SIWE не пройшла
+        """
+        data = request.get_json(force=True) or {}
+        message_str = data.get("message")
+        signature = data.get("signature")
+        desired_role = data.get("role")
+
+        if not message_str or not signature:
+            return jsonify(
+                {"ok": False, "error": "invalid_data", "message": "message і signature обов'язкові"}), 400
+
+        nonce = session.get("siwe_nonce")
+        if not nonce:
+            return jsonify(
+                {"ok": False, "error": "no_nonce", "message": "SIWE nonce відсутній або застарілий"}), 400
+
+        try:
+            msg = SiweMessage.from_message(message_str)
+
+            # Перевірка підпису + nonce
+            msg.verify(signature, nonce=nonce)
+
+            # Додаткові перевірки безпеки
+            expected_domain = request.host.split(":")[0]
+            if msg.domain != expected_domain:
+                return jsonify({"ok": False, "error": "invalid_domain"}), 401
+
+            # Можна перевірити chainId, якщо хочеш
+            # if msg.chain_id != 1: ...
+
+            wallet_address = to_checksum_address(msg.address)
+
+            # nonce використали — очищаємо
+            session.pop("siwe_nonce", None)
+
+            # Шукаємо або створюємо юзера
+            user = User.query.filter_by(wallet_address=wallet_address).first()
+            if not user:
+                # Якщо email необов'язковий — можна залишити None
+                user = User(
+
+                )
+                user.email = f"{wallet_address}@web3jobs.com"
+                user.role = desired_role if desired_role in ["user", "recruiter"] else "user"
+                user.wallet_address = wallet_address
+
+                db.session.add(user)
+                db.session.commit()
+
+                # Створюємо профіль
+                profile = UserProfile()
+                profile.user_id = user.id
+                db.session.add(profile)
+                db.session.commit()
+
+            # Логін через JWT
+            payload = auth_payload(user)
+            return jsonify({"ok": True, **payload})
+
+        except VerificationError as e:
+            return jsonify({"ok": False, "error": "VerificationError", "message": e}), 401
+        except Exception as e:
+            # Логи можна писати в stdout/файл
+            return jsonify({"ok": False, "error": "siwe_failed", "message": f"SIWE verification failed {e}"}), 401
+
     @app.get("/me")
     @jwt_required(optional=True)
     def me():
+        """
+        Get current user (short info)
+        ---
+        tags:
+          - Auth
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Поточний користувач або None
+        """
         uid = get_jwt_identity()
         if not uid:
             return jsonify({"ok": False, "user": None})
@@ -243,8 +527,15 @@ def create_app():
 
     @app.post("/logout")
     def logout():
-        # JWT — статлес, тому сервер нічого не «забуває».
-        # На фронті достатньо видалити токени з localStorage.
+        """
+        Logout (client-side token clear hint)
+        ---
+        tags:
+          - Auth
+        responses:
+          200:
+            description: Логаут з боку клієнта (видалення токенів)
+        """
         return jsonify({"ok": True, "message": "Logged out (client-side token clear)"})
 
 
@@ -252,6 +543,20 @@ def create_app():
     @app.get("/dashboard")
     @jwt_required()
     def dashboard():
+
+        """
+        Get user dashboard
+        ---
+        tags:
+          - User
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Дані для дашборду користувача
+          401:
+            description: Неавторизовано
+        """
         user = current_user_jwt()
         if not user:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
@@ -279,39 +584,157 @@ def create_app():
                 for a in apps
             ]
         })
+
     @app.get("/profile")
     @jwt_required()
     def get_profile():
+        """
+        Get user profile
+        ---
+        tags:
+          - User
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Профіль користувача
+          401:
+            description: Неавторизовано
+        """
         user = current_user_jwt()
         if not user:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
-        return jsonify({"ok": True, "profile": user.profile.to_dict() if user.profile else None})
 
+        base = user.profile.to_dict() if user.profile else {}
+        base["email"] = user.email
+        base["role"] = user.role
+
+        return jsonify({"ok": True, "profile": base})
     @app.put("/profile")
     @jwt_required()
     def update_profile():
+        """
+        Update user profile
+        ---
+        tags:
+          - User
+        security:
+          - Bearer: []
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                phone:
+                  type: string
+                telegram:
+                  type: string
+                discord:
+                  type: string
+                github:
+                  type: string
+                linkedin:
+                  type: string
+                portfolio_url:
+                  type: string
+                ens_domain:
+                  type: string
+                skills:
+                  type: string
+                bio:
+                  type: string
+                preferred_tokens:
+                  type: string
+                nft_portfolio:
+                  type: string
+                experience_years:
+                  type: integer
+        responses:
+          200:
+            description: Профіль оновлено
+          401:
+            description: Неавторизовано
+        """
         user = current_user_jwt()
         if not user:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
 
         data = request.get_json(force=True) or {}
+
+        # ---- оновлюємо User.email / User.role ----
+        if "email" in data:
+            new_email = (data["email"] or "").strip() or None
+            # тут за бажанням можна додати перевірку унікальності
+            if new_email and User.query.filter(User.email == new_email, User.id != user.id).first():
+                return jsonify({"ok": False, "error": "email_exists", "message": "Email вже зайнятий"}), 409
+            user.email = new_email
+
+        if "role" in data and data["role"] in ["user", "recruiter"]:
+            user.role = data["role"]
+        # (admin краще не дозволяти міняти з фронта)
+
         profile = user.profile or UserProfile(user_id=user.id)
         for field in [
-            "full_name","phone","telegram","discord","github","linkedin","portfolio_url",
-            "ens_domain","skills","bio","preferred_tokens","nft_portfolio"
+            "full_name", "phone", "telegram", "discord", "github", "linkedin", "portfolio_url",
+            "ens_domain", "skills", "bio", "preferred_tokens", "nft_portfolio"
         ]:
             if field in data:
                 setattr(profile, field, data[field])
+
         if "experience_years" in data:
             profile.experience_years = int(data["experience_years"]) if data["experience_years"] is not None else None
 
+        db.session.add(user)
         db.session.add(profile)
         db.session.commit()
-        return jsonify({"ok": True, "message": "Профіль оновлено", "profile": profile.to_dict()})
+
+        merged = profile.to_dict()
+        merged["email"] = user.email
+        merged["role"] = user.role
+
+        return jsonify({"ok": True, "message": "Профіль оновлено", "profile": merged})
 
     # ---------------- Jobs ----------------
     @app.get("/jobs")
     def jobs_list():
+        """
+              Get list of active jobs (with filters)
+              ---
+              tags:
+                - Jobs
+              parameters:
+                - in: query
+                  name: page
+                  type: integer
+                  required: false
+                  default: 1
+                - in: query
+                  name: per_page
+                  type: integer
+                  required: false
+                  default: 20
+                - in: query
+                  name: type
+                  type: string
+                  required: false
+                - in: query
+                  name: token
+                  type: string
+                  required: false
+                - in: query
+                  name: dao
+                  type: string
+                  required: false
+              responses:
+                200:
+                  description: Пагінований список вакансій
+              """
         page = request.args.get("page", 1, type=int)
         per_page = request.args.get("per_page", 20, type=int)
         job_type = request.args.get("type")
@@ -338,6 +761,22 @@ def create_app():
     @app.get("/job/<int:job_id>")
     @jwt_required(optional=True)
     def job_detail(job_id):
+        """
+        Get job details
+        ---
+        tags:
+          - Jobs
+        parameters:
+          - in: path
+            name: job_id
+            type: integer
+            required: true
+        responses:
+          200:
+            description: Детальна інформація про вакансію
+          404:
+            description: Вакансію не знайдено
+        """
         job = Job.query.get_or_404(job_id)
         job.views_count += 1
         db.session.commit()
@@ -352,6 +791,40 @@ def create_app():
     @app.post("/job/<int:job_id>/apply")
     @jwt_required()
     def apply_job(job_id):
+        """
+        Apply to a job
+        ---
+        tags:
+          - Jobs
+        security:
+          - Bearer: []
+        parameters:
+          - in: path
+            name: job_id
+            type: integer
+            required: true
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                cover_letter:
+                  type: string
+                resume_url:
+                  type: string
+        responses:
+          201:
+            description: Заявку створено
+          400:
+            description: Некоректні дані
+          401:
+            description: Неавторизовано
+          403:
+            description: Тільки кандидати можуть подавати заявки
+          409:
+            description: Заявку вже подано
+        """
         user = current_user_jwt()
         if not user:
             return jsonify({"ok": False, "error": "unauthorized"}), 401
@@ -378,6 +851,19 @@ def create_app():
     @app.get("/recruiter/dashboard")
     @jwt_required()
     def recruiter_dashboard():
+        """
+        Recruiter dashboard
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Дані дашборду рекрутера
+          403:
+            description: Доступ тільки для рекрутерів/адмінів
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -405,6 +891,19 @@ def create_app():
     @app.get("/recruiter/company")
     @jwt_required()
     def get_company():
+        """
+        Get recruiter company profile
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Профіль компанії або None
+          403:
+            description: Доступ тільки для рекрутерів/адмінів
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard:
@@ -418,6 +917,50 @@ def create_app():
     @app.post("/recruiter/company")
     @jwt_required()
     def create_company():
+        """
+        Create company profile
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                website:
+                  type: string
+                description:
+                  type: string
+                logo_url:
+                  type: string
+                company_type:
+                  type: string
+                treasury_address:
+                  type: string
+                token_symbol:
+                  type: string
+                founded_year:
+                  type: integer
+                team_size:
+                  type: string
+                location:
+                  type: string
+        responses:
+          201:
+            description: Компанію створено
+          400:
+            description: Некоректні дані
+          403:
+            description: Доступ тільки для рекрутерів/адмінів
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -446,6 +989,50 @@ def create_app():
     @app.put("/recruiter/company/edit")
     @jwt_required()
     def edit_company():
+        """
+         Edit company profile
+         ---
+         tags:
+           - Recruiter
+         security:
+           - Bearer: []
+         consumes:
+           - application/json
+         parameters:
+           - in: body
+             name: body
+             required: true
+             schema:
+               type: object
+               properties:
+                 name:
+                   type: string
+                 website:
+                   type: string
+                 description:
+                   type: string
+                 logo_url:
+                   type: string
+                 company_type:
+                   type: string
+                 treasury_address:
+                   type: string
+                 token_symbol:
+                   type: string
+                 founded_year:
+                   type: integer
+                 team_size:
+                   type: string
+                 location:
+                   type: string
+         responses:
+           200:
+             description: Компанію оновлено
+           403:
+             description: Доступ тільки для рекрутерів/адмінів
+           404:
+             description: Компанії не знайдено
+         """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -488,6 +1075,66 @@ def create_app():
     @app.post("/recruiter/job/create")
     @jwt_required()
     def create_job():
+        """
+        Create job
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        consumes:
+          - application/json
+        parameters:
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                description:
+                  type: string
+                requirements:
+                  type: string
+                responsibilities:
+                  type: string
+                salary_min:
+                  type: number
+                salary_max:
+                  type: number
+                salary_token:
+                  type: string
+                salary_usd_equivalent:
+                  type: number
+                job_type:
+                  type: string
+                experience_level:
+                  type: string
+                location_type:
+                  type: string
+                location:
+                  type: string
+                is_dao_job:
+                  type: boolean
+                uses_escrow:
+                  type: boolean
+                escrow_contract:
+                  type: string
+                required_on_chain_proof:
+                  type: boolean
+                skills_required:
+                  type: string
+                benefits:
+                  type: string
+        responses:
+          201:
+            description: Вакансію створено
+          400:
+            description: Немає профілю компанії
+          403:
+            description: Доступ тільки для рекрутерів/адмінів
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -525,6 +1172,70 @@ def create_app():
     @app.put("/recruiter/job/<int:job_id>/edit")
     @jwt_required()
     def edit_job(job_id):
+        """
+              Edit job
+              ---
+              tags:
+                - Recruiter
+              security:
+                - Bearer: []
+              parameters:
+                - in: path
+                  name: job_id
+                  type: integer
+                  required: true
+                - in: body
+                  name: body
+                  required: true
+                  schema:
+                    type: object
+                    properties:
+                      title:
+                        type: string
+                      description:
+                        type: string
+                      requirements:
+                        type: string
+                      responsibilities:
+                        type: string
+                      salary_token:
+                        type: string
+                      job_type:
+                        type: string
+                      experience_level:
+                        type: string
+                      location_type:
+                        type: string
+                      location:
+                        type: string
+                      escrow_contract:
+                        type: string
+                      skills_required:
+                        type: string
+                      benefits:
+                        type: string
+                      salary_min:
+                        type: number
+                      salary_max:
+                        type: number
+                      salary_usd_equivalent:
+                        type: number
+                      is_dao_job:
+                        type: boolean
+                      uses_escrow:
+                        type: boolean
+                      required_on_chain_proof:
+                        type: boolean
+                      is_active:
+                        type: boolean
+              responses:
+                200:
+                  description: Вакансію оновлено
+                403:
+                  description: Доступ заборонено
+                404:
+                  description: Вакансію не знайдено
+              """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -555,6 +1266,26 @@ def create_app():
     @app.get("/recruiter/candidate/<int:user_id>")
     @jwt_required()
     def recruiter_candidate(user_id):
+        """
+               Get candidate profile (for recruiter)
+               ---
+               tags:
+                 - Recruiter
+               security:
+                 - Bearer: []
+               parameters:
+                 - in: path
+                   name: user_id
+                   type: integer
+                   required: true
+               responses:
+                 200:
+                   description: Профіль кандидата
+                 403:
+                   description: Доступ заборонено
+                 404:
+                   description: Кандидата не знайдено
+               """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -592,6 +1323,26 @@ def create_app():
     @app.get("/recruiter/job/<int:job_id>/applications")
     @jwt_required()
     def job_applications(job_id):
+        """
+        Get applications for a job
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        parameters:
+          - in: path
+            name: job_id
+            type: integer
+            required: true
+        responses:
+          200:
+            description: Список заявок на вакансію
+          403:
+            description: Доступ заборонено
+          404:
+            description: Вакансію не знайдено
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -606,6 +1357,36 @@ def create_app():
     @app.put("/recruiter/application/<int:app_id>/update")
     @jwt_required()
     def update_application(app_id):
+        """
+        Update application status/notes
+        ---
+        tags:
+          - Recruiter
+        security:
+          - Bearer: []
+        parameters:
+          - in: path
+            name: app_id
+            type: integer
+            required: true
+          - in: body
+            name: body
+            required: true
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                recruiter_notes:
+                  type: string
+        responses:
+          200:
+            description: Статус/примітки заявки оновлено
+          403:
+            description: Доступ заборонено
+          404:
+            description: Заявку не знайдено
+        """
         user = current_user_jwt()
         guard = recruiter_guard(user)
         if guard: return guard
@@ -626,6 +1407,19 @@ def create_app():
     @app.get("/admin/dashboard")
     @jwt_required()
     def admin_dashboard():
+        """
+        Admin dashboard
+        ---
+        tags:
+          - Admin
+        security:
+          - Bearer: []
+        responses:
+          200:
+            description: Загальна статистика платформи
+          403:
+            description: Доступ тільки для адміністраторів
+        """
         user = current_user_jwt()
         guard = admin_guard(user)
         if guard: return guard
@@ -652,6 +1446,26 @@ def create_app():
     @app.post("/admin/verify-company/<int:company_id>")
     @jwt_required()
     def verify_company(company_id):
+        """
+        Verify company
+        ---
+        tags:
+          - Admin
+        security:
+          - Bearer: []
+        parameters:
+          - in: path
+            name: company_id
+            type: integer
+            required: true
+        responses:
+          200:
+            description: Компанію верифіковано
+          403:
+            description: Доступ тільки для адміністраторів
+          404:
+            description: Компанію не знайдено
+        """
         user = current_user_jwt()
         guard = admin_guard(user)
         if guard: return guard
@@ -674,130 +1488,6 @@ def create_app():
             db.session.add(admin)
             db.session.commit()
         return jsonify({"ok": True, "admin": admin.to_dict()})
-
-    nonce_store = {}
-
-    @app.post("/auth/wallet/nonce")
-    def wallet_nonce():
-        """Generate a nonce for SIWE authentication"""
-        data = request.get_json(force=True) or {}
-        address = data.get("address", "").lower()
-
-        if not address or not address.startswith("0x"):
-            return jsonify({
-                "ok": False,
-                "error": "invalid_address",
-                "message": "Невірна адреса гаманця"
-            }), 400
-
-        # Generate random nonce
-        nonce = secrets.token_hex(16)
-
-        # Store nonce with expiration (5 minutes)
-        nonce_store[address] = {
-            "nonce": nonce,
-            "expires": datetime.utcnow() + timedelta(minutes=5)
-        }
-
-        return jsonify({
-            "ok": True,
-            "nonce": nonce,
-            "address": address
-        })
-
-    @app.post("/auth/wallet/verify")
-    def wallet_verify():
-        """Verify SIWE signature and login/register user"""
-        try:
-            data = request.get_json(force=True) or {}
-            message_text = data.get("message")
-            signature = data.get("signature")
-
-            if not message_text or not signature:
-                return jsonify({
-                    "ok": False,
-                    "error": "invalid_data",
-                    "message": "Відсутнє повідомлення або підпис"
-                }), 400
-
-            # Parse SIWE message from text
-            siwe_message = SiweMessage.from_message(message=message_text)
-            address = siwe_message.address.lower()
-
-            # Verify nonce
-            stored = nonce_store.get(address)
-            if not stored:
-                return jsonify({
-                    "ok": False,
-                    "error": "invalid_nonce",
-                    "message": "Невірний або застарілий nonce"
-                }), 400
-
-            if datetime.utcnow() > stored["expires"]:
-                del nonce_store[address]
-                return jsonify({
-                    "ok": False,
-                    "error": "expired_nonce",
-                    "message": "Nonce застарів. Спробуйте ще раз."
-                }), 400
-
-            if siwe_message.nonce != stored["nonce"]:
-                return jsonify({
-                    "ok": False,
-                    "error": "nonce_mismatch",
-                    "message": "Nonce не збігається"
-                }), 400
-
-            # Verify signature
-            try:
-                siwe_message.verify(signature=signature, nonce=stored["nonce"])
-
-            except Exception as e:
-                return jsonify({
-                    "ok": False,
-                    "error": "invalid_signature",
-                    "message": f"Невірний підпис: {str(e)}"
-                }), 400
-
-            # Clean up used nonce
-            del nonce_store[address]
-
-            # Check if user exists
-            user = User.query.filter_by(wallet_address=address).first()
-
-            if not user:
-                # Register new user with wallet
-                user = User(
-                )
-                user.email=f"{address[:8]}@wallet.local"
-                user.password_hash=generate_password_hash(secrets.token_hex(32), method="pbkdf2:sha256")
-                user.role="user"
-                user.wallet_address=address
-                db.session.add(user)
-                db.session.commit()
-
-                # Create profile
-                profile = UserProfile(user_id=user.id)
-                db.session.add(profile)
-                db.session.commit()
-
-            # Return auth payload
-            return jsonify({"ok": True, **auth_payload(user)}), 200
-
-        except ValueError as e:
-            return jsonify({
-                "ok": False,
-                "error": "verification_failed",
-                "message": f"Помилка верифікації підпису: {str(e)}"
-            }), 400
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return jsonify({
-                "ok": False,
-                "error": "server_error",
-                "message": f"Внутрішня помилка сервера: {str(e)}"
-            }), 500
 
     return app
 

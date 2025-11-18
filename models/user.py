@@ -13,7 +13,7 @@ class User(UserMixin, db.Model):
     email = Column(String(120), unique=True, nullable=False)
     password_hash = Column(String(255))
     role = Column(String(20), default="user")  # user, recruiter, admin
-    wallet_address = Column(String(42), unique=True)
+    wallet_address = Column(String(100), unique=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     profile = relationship("UserProfile", backref="user", uselist=False, cascade="all, delete-orphan")
