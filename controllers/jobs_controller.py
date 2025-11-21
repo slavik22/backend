@@ -10,6 +10,9 @@ from helpers import current_user_jwt, recruiter_guard, to_decimal
 jobs_bp = Blueprint("jobs", __name__)
 
 
+# ============================================================
+# GET JOB LIST
+# ============================================================
 @jobs_bp.get("/jobs")
 def jobs_list():
     """
@@ -17,6 +20,34 @@ def jobs_list():
     ---
     tags:
       - Jobs
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        required: false
+      - name: per_page
+        in: query
+        type: integer
+        required: false
+      - name: type
+        in: query
+        type: string
+        description: Job type (full-time, part-time)
+      - name: token
+        in: query
+        type: string
+        description: Salary token (USDC, DAI, ETH)
+      - name: dao
+        in: query
+        type: boolean
+        description: Only DAO jobs
+      - name: blockchain
+        in: query
+        type: string
+        description: Blockchain (Ethereum, Polygon, Solana)
+    responses:
+      200:
+        description: List of jobs
     """
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
@@ -49,6 +80,9 @@ def jobs_list():
     )
 
 
+# ============================================================
+# JOB DETAIL
+# ============================================================
 @jobs_bp.get("/job/<int:job_id>")
 @jwt_required(optional=True)
 def job_detail(job_id):
@@ -57,6 +91,16 @@ def job_detail(job_id):
     ---
     tags:
       - Jobs
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Job details
+      404:
+        description: Job not found
     """
     job = Job.query.get_or_404(job_id)
     job.views_count += 1
@@ -75,36 +119,56 @@ def job_detail(job_id):
     )
 
 
+# ============================================================
+# APPLY TO JOB
+# ============================================================
 @jobs_bp.post("/job/<int:job_id>/apply")
 @jwt_required()
 def apply_job(job_id):
     """
-    Apply to a job
+    Apply to a job (candidate only)
     ---
     tags:
       - Jobs
+    security:
+      - Bearer: []
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        required: false
+        schema:
+          type: object
+          properties:
+            cover_letter:
+              type: string
+            resume_url:
+              type: string
+    responses:
+      201:
+        description: Application submitted
+      403:
+        description: Only candidates can apply
+      409:
+        description: Already applied
     """
     user = current_user_jwt()
     if not user:
         return jsonify({"ok": False, "error": "unauthorized"}), 401
     if user.role != "user":
         return jsonify(
-            {
-                "ok": False,
-                "error": "forbidden",
-                "message": "Тільки кандидати можуть подавати заявки.",
-            }
+            {"ok": False, "error": "forbidden", "message": "Only candidates can apply."}
         ), 403
 
     job = Job.query.get_or_404(job_id)
+
     existing = Application.query.filter_by(job_id=job_id, user_id=user.id).first()
     if existing:
         return jsonify(
-            {
-                "ok": False,
-                "error": "duplicate",
-                "message": "Ви вже подали заявку на цю вакансію.",
-            }
+            {"ok": False, "error": "duplicate", "message": "Already applied."}
         ), 409
 
     data = request.get_json(force=True) or {}
@@ -116,26 +180,60 @@ def apply_job(job_id):
     )
     db.session.add(application)
     db.session.commit()
+
     return (
         jsonify(
-            {
-                "ok": True,
-                "message": "Заявку відправлено",
-                "application": application.to_dict(),
-            }
+            {"ok": True, "message": "Application sent", "application": application.to_dict()}
         ),
         201,
     )
 
 
+# ============================================================
+# CREATE JOB (RECRUITER)
+# ============================================================
 @jobs_bp.post("/recruiter/job/create")
 @jwt_required()
 def create_job():
     """
-    Create job
+    Create a new job (recruiter)
     ---
     tags:
       - Recruiter
+    security:
+      - Bearer: []
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          properties:
+            title: {type: string}
+            description: {type: string}
+            requirements: {type: string}
+            responsibilities: {type: string}
+            salary_min: {type: number}
+            salary_max: {type: number}
+            salary_token: {type: string}
+            salary_usd_equivalent: {type: number}
+            job_type: {type: string}
+            experience_level: {type: string}
+            location_type: {type: string}
+            location: {type: string}
+            is_dao_job: {type: boolean}
+            uses_escrow: {type: boolean}
+            escrow_contract: {type: string}
+            required_on_chain_proof: {type: boolean}
+            skills_required: {type: string}
+            benefits: {type: string}
+    responses:
+      201:
+        description: Job created
+      400:
+        description: Recruiter has no company profile
+      403:
+        description: Forbidden (not recruiter)
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -145,14 +243,11 @@ def create_job():
     company = user.company
     if not company:
         return jsonify(
-            {
-                "ok": False,
-                "error": "no_company",
-                "message": "Спочатку створіть профіль компанії.",
-            }
+            {"ok": False, "error": "no_company", "message": "Create company profile first."}
         ), 400
 
     data = request.get_json(force=True) or {}
+
     job = Job(
         company_id=company.id,
         title=data.get("title"),
@@ -173,21 +268,43 @@ def create_job():
         required_on_chain_proof=bool(data.get("required_on_chain_proof")),
         skills_required=data.get("skills_required"),
         benefits=data.get("benefits"),
-        # blockchain=data.get("blockchain"),
     )
     db.session.add(job)
     db.session.commit()
-    return jsonify({"ok": True, "message": "Вакансію створено", "job": job.to_dict()}), 201
+
+    return jsonify({"ok": True, "message": "Job created", "job": job.to_dict()}), 201
 
 
+# ============================================================
+# EDIT JOB
+# ============================================================
 @jobs_bp.put("/recruiter/job/<int:job_id>/edit")
 @jwt_required()
 def edit_job(job_id):
     """
-    Edit job
+    Edit a job (recruiter)
     ---
     tags:
       - Recruiter
+    security:
+      - Bearer: []
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        schema:
+          type: object
+          description: Fields to update
+    responses:
+      200:
+        description: Job updated
+      403:
+        description: Forbidden
+      404:
+        description: Job not found
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -195,35 +312,27 @@ def edit_job(job_id):
         return guard
 
     job = Job.query.get_or_404(job_id)
+
     if job.company.recruiter_id != user.id and user.role != "admin":
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     data = request.get_json(force=True) or {}
+
     for field in [
-        "title",
-        "description",
-        # "blockchain",
-        "requirements",
-        "responsibilities",
-        "salary_token",
-        "job_type",
-        "experience_level",
-        "location_type",
-        "location",
-        "escrow_contract",
-        "skills_required",
-        "benefits",
+        "title", "description", "requirements", "responsibilities",
+        "salary_token", "job_type", "experience_level", "location_type",
+        "location", "escrow_contract", "skills_required", "benefits",
     ]:
         if field in data:
             setattr(job, field, data[field])
 
-    for numeric in ["salary_min", "salary_max", "salary_usd_equivalent"]:
-        if numeric in data:
-            setattr(job, numeric, to_decimal(data[numeric]))
+    for n in ["salary_min", "salary_max", "salary_usd_equivalent"]:
+        if n in data:
+            setattr(job, n, to_decimal(data[n]))
 
     for boolean in ["is_dao_job", "uses_escrow", "required_on_chain_proof", "is_active"]:
         if boolean in data:
             setattr(job, boolean, bool(data[boolean]))
 
     db.session.commit()
-    return jsonify({"ok": True, "message": "Вакансію оновлено", "job": job.to_dict()})
+    return jsonify({"ok": True, "message": "Job updated", "job": job.to_dict()})

@@ -12,19 +12,49 @@ from helpers import auth_payload, user_min_dict, current_user_jwt
 
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
-from flask import current_app as app  # для GOOGLE_CLIENT_ID
+from flask import current_app as app
 
 
 auth_bp = Blueprint("auth", __name__)
 
 
+# ================================
+# REGISTER
+# ================================
 @auth_bp.post("/auth/register")
 def auth_register():
     """
-    Register user with email/password
+    Register a new user (email + password)
     ---
     tags:
       - Auth
+    description: Create a new user account using email and password.
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required:
+            - email
+            - password
+          properties:
+            email:
+              type: string
+            password:
+              type: string
+            role:
+              type: string
+              enum: ["user", "recruiter"]
+            wallet_address:
+              type: string
+    responses:
+      201:
+        description: User registered successfully
+      400:
+        description: Missing required data
+      409:
+        description: Email already exists
     """
     data = request.get_json(force=True) or {}
     email = data.get("email")
@@ -33,21 +63,16 @@ def auth_register():
     wallet = data.get("wallet_address")
 
     if not email or not password:
-        return jsonify(
-            {"ok": False, "error": "invalid_data", "message": "Email і пароль обов'язкові."}
-        ), 400
+        return jsonify({"ok": False, "error": "invalid_data"}), 400
 
     if User.query.filter_by(email=email).first():
-        return jsonify(
-            {"ok": False, "error": "exists", "message": "Email вже зареєстрований."}
-        ), 409
+        return jsonify({"ok": False, "error": "exists"}), 409
 
-    user = User(
-    )
+    user = User()
     user.email = email
     user.password_hash = generate_password_hash(password, method="pbkdf2:sha256")
     user.role = role
-    user.wallet_address = wallet if wallet else None
+    user.wallet_address = wallet or None
 
     db.session.add(user)
     db.session.commit()
@@ -59,13 +84,34 @@ def auth_register():
     return jsonify({"ok": True, **auth_payload(user)}), 201
 
 
+# ================================
+# LOGIN
+# ================================
 @auth_bp.post("/auth/login")
 def auth_login():
     """
-    Login with email/password
+    Login using email and password
     ---
     tags:
       - Auth
+    parameters:
+      - in: body
+        name: credentials
+        schema:
+          type: object
+          required:
+            - email
+            - password
+          properties:
+            email:
+              type: string
+            password:
+              type: string
+    responses:
+      200:
+        description: Logged in successfully
+      401:
+        description: Invalid credentials
     """
     data = request.get_json(force=True) or {}
     email = data.get("email")
@@ -74,37 +120,65 @@ def auth_login():
 
     if user and check_password_hash(user.password_hash, password):
         return jsonify({"ok": True, **auth_payload(user)})
-    return jsonify(
-        {"ok": False, "error": "invalid_credentials", "message": "Невірний email або пароль."}
-    ), 401
+    return jsonify({"ok": False, "error": "invalid_credentials"}), 401
 
 
+# ================================
+# REFRESH TOKEN
+# ================================
 @auth_bp.post("/auth/refresh")
 @jwt_required(refresh=True)
 def auth_refresh():
     """
-    Refresh access token
+    Refresh JWT access token
     ---
     tags:
       - Auth
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: New access token created
+      404:
+        description: User not found
     """
     uid = get_jwt_identity()
     user = User.query.get(int(uid))
     if not user:
-        return jsonify({"ok": False, "error": "not_found"}), 404
+        return jsonify({"ok": False}), 404
+
     from flask_jwt_extended import create_access_token
-
-    new_access = create_access_token(identity=str(user.id))
-    return jsonify({"ok": True, "access_token": new_access})
+    return jsonify({"ok": True, "access_token": create_access_token(identity=str(user.id))})
 
 
+# ================================
+# GOOGLE AUTH
+# ================================
 @auth_bp.post("/auth/google")
 def auth_google():
     """
-    Login / Register via Google OAuth (id_token)
+    Login/Register using Google OAuth2 ID token
     ---
     tags:
       - Auth
+    parameters:
+      - in: body
+        schema:
+          type: object
+          properties:
+            credential:
+              type: string
+              description: Google ID token
+            role:
+              type: string
+              enum: ["user", "recruiter"]
+    responses:
+      200:
+        description: Authenticated
+      400:
+        description: Invalid data
+      401:
+        description: Google verification failed
     """
     data = request.get_json(force=True) or {}
     credential = data.get("credential")
@@ -131,35 +205,34 @@ def auth_google():
             user.wallet_address = None
             db.session.add(user)
             db.session.commit()
+
             if not user.profile:
-                db.session.add(
-                    UserProfile(user_id=user.id, full_name=idinfo.get("name"))
-                )
+                db.session.add(UserProfile(user_id=user.id, full_name=idinfo.get("name")))
                 db.session.commit()
 
-        if user.profile:
-            changed = False
-            full_name = idinfo.get("name")
-            if full_name and user.profile.full_name != full_name:
-                user.profile.full_name = full_name
-                changed = True
-            if changed:
-                db.session.add(user.profile)
-                db.session.commit()
+        full_name = idinfo.get("name")
+        if full_name and user.profile and user.profile.full_name != full_name:
+            user.profile.full_name = full_name
+            db.session.commit()
 
-        payload = auth_payload(user)
-        return jsonify({"ok": True, **payload})
+        return jsonify({"ok": True, **auth_payload(user)})
     except Exception:
         return jsonify({"ok": False, "message": "Google verification failed"}), 401
 
 
+# ================================
+# SIWE NONCE
+# ================================
 @auth_bp.get("/auth/siwe/nonce")
 def siwe_nonce():
     """
-    Get nonce for SIWE (Sign-In with Ethereum)
+    Get SIWE nonce for crypto wallet login
     ---
     tags:
       - Auth
+    responses:
+      200:
+        description: Nonce generated
     """
     nonce = session.get("siwe_nonce")
     if not nonce:
@@ -168,13 +241,38 @@ def siwe_nonce():
     return jsonify({"ok": True, "nonce": nonce})
 
 
+# ================================
+# SIWE VERIFY
+# ================================
 @auth_bp.post("/auth/siwe/verify")
 def siwe_verify():
     """
-    Login/Register via crypto wallet (SIWE)
+    Verify SIWE signature and log in user
     ---
     tags:
       - Auth
+    parameters:
+      - in: body
+        schema:
+          type: object
+          required:
+            - message
+            - signature
+          properties:
+            message:
+              type: string
+            signature:
+              type: string
+            role:
+              type: string
+              enum: ["user", "recruiter"]
+    responses:
+      200:
+        description: SIWE login successful
+      400:
+        description: Missing data or nonce
+      401:
+        description: Verification failed
     """
     data = request.get_json(force=True) or {}
     message_str = data.get("message")
@@ -182,20 +280,15 @@ def siwe_verify():
     desired_role = data.get("role")
 
     if not message_str or not signature:
-        return jsonify(
-            {"ok": False, "error": "invalid_data", "message": "message і signature обов'язкові"}
-        ), 400
+        return jsonify({"ok": False, "error": "invalid_data"}), 400
 
     nonce = session.get("siwe_nonce")
     if not nonce:
-        return jsonify(
-            {"ok": False, "error": "no_nonce", "message": "SIWE nonce відсутній або застарілий"}
-        ), 400
+        return jsonify({"ok": False, "error": "no_nonce"}), 400
 
     try:
         msg = SiweMessage.from_message(message_str)
         msg.verify(signature, nonce=nonce)
-
         wallet_address = to_checksum_address(msg.address)
         session.pop("siwe_nonce", None)
 
@@ -212,25 +305,30 @@ def siwe_verify():
             db.session.add(profile)
             db.session.commit()
 
-        payload = auth_payload(user)
-        return jsonify({"ok": True, **payload})
+        return jsonify({"ok": True, **auth_payload(user)})
 
     except VerificationError as e:
         return jsonify({"ok": False, "error": "VerificationError", "message": str(e)}), 401
     except Exception as e:
-        return jsonify(
-            {"ok": False, "error": "siwe_failed", "message": f"SIWE verification failed {e}"}
-        ), 401
+        return jsonify({"ok": False, "error": "siwe_failed"}), 401
 
 
+# ================================
+# CURRENT USER
+# ================================
 @auth_bp.get("/me")
 @jwt_required(optional=True)
 def me():
     """
-    Get current user (short info)
+    Get current user (minimal info)
     ---
     tags:
       - Auth
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Current user info
     """
     uid = get_jwt_identity()
     if not uid:
@@ -239,12 +337,18 @@ def me():
     return jsonify({"ok": True, "user": user_min_dict(user) if user else None})
 
 
+# ================================
+# LOGOUT
+# ================================
 @auth_bp.post("/logout")
 def logout():
     """
-    Logout (client-side token clear hint)
+    Logout (client-side only)
     ---
     tags:
       - Auth
+    responses:
+      200:
+        description: Logout success
     """
-    return jsonify({"ok": True, "message": "Logged out (client-side token clear)"})
+    return jsonify({"ok": True, "message": "Logged out"})

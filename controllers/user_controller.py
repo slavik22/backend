@@ -9,14 +9,24 @@ from helpers import current_user_jwt
 user_bp = Blueprint("user", __name__)
 
 
+# ============================================================
+# USER DASHBOARD
+# ============================================================
 @user_bp.get("/dashboard")
 @jwt_required()
 def dashboard():
     """
-    Get user dashboard
+    Get user dashboard information
     ---
     tags:
       - User
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: User dashboard data
+      401:
+        description: Unauthorized
     """
     user = current_user_jwt()
     if not user:
@@ -50,14 +60,24 @@ def dashboard():
     )
 
 
+# ============================================================
+# GET PROFILE
+# ============================================================
 @user_bp.get("/profile")
 @jwt_required()
 def get_profile():
     """
-    Get user profile
+    Get user profile data
     ---
     tags:
       - User
+    security:
+      - Bearer: []
+    responses:
+      200:
+        description: Profile returned
+      401:
+        description: Unauthorized
     """
     user = current_user_jwt()
     if not user:
@@ -70,14 +90,51 @@ def get_profile():
     return jsonify({"ok": True, "profile": base})
 
 
+# ============================================================
+# UPDATE PROFILE
+# ============================================================
 @user_bp.put("/profile")
 @jwt_required()
 def update_profile():
     """
-    Update user profile
+    Update user profile information
     ---
     tags:
       - User
+    security:
+      - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          description: User profile fields to update
+          properties:
+            email: {type: string}
+            role:
+              type: string
+              enum: ["user", "recruiter"]
+            full_name: {type: string}
+            phone: {type: string}
+            telegram: {type: string}
+            discord: {type: string}
+            github: {type: string}
+            linkedin: {type: string}
+            portfolio_url: {type: string}
+            ens_domain: {type: string}
+            skills: {type: string}
+            bio: {type: string}
+            preferred_tokens: {type: string}
+            nft_portfolio: {type: string}
+            experience_years: {type: integer}
+    responses:
+      200:
+        description: Profile updated
+      401:
+        description: Unauthorized
+      409:
+        description: Email already exists
     """
     user = current_user_jwt()
     if not user:
@@ -85,15 +142,14 @@ def update_profile():
 
     data = request.get_json(force=True) or {}
 
-    # User.email / User.role
+    # ---------------------------
+    # Update user email and role
+    # ---------------------------
     if "email" in data and data["email"]:
         new_email = (data["email"] or "").strip() or None
         from models.user import User
 
-        if (
-            new_email
-            and User.query.filter(User.email == new_email, User.id != user.id).first()
-        ):
+        if new_email and User.query.filter(User.email == new_email, User.id != user.id).first():
             return (
                 jsonify(
                     {
@@ -109,11 +165,14 @@ def update_profile():
     if "role" in data and data["role"] in ["user", "recruiter"]:
         user.role = data["role"]
 
+    # ---------------------------
+    # Update user profile fields
+    # ---------------------------
     profile = user.profile or UserProfile(user_id=user.id)
+
     for field in [
         "full_name",
         "phone",
-        # "blockchain",
         "telegram",
         "discord",
         "github",

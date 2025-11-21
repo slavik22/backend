@@ -12,16 +12,24 @@ from helpers import current_user_jwt, recruiter_guard
 recruiter_bp = Blueprint("recruiter", __name__)
 
 
+# ============================================================
+# RECRUITER DASHBOARD
+# ============================================================
 @recruiter_bp.get("/recruiter/dashboard")
 @jwt_required()
 def recruiter_dashboard():
     """
-    Recruiter dashboard
+    Recruiter dashboard data
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    responses:
+      200:
+        description: Dashboard information returned
+      403:
+        description: Forbidden (not recruiter)
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -38,22 +46,13 @@ def recruiter_dashboard():
             }
         )
 
-    jobs = (
-        Job.query.filter_by(company_id=company.id)
-        .order_by(Job.created_at.desc())
-        .all()
-    )
+    jobs = Job.query.filter_by(company_id=company.id).order_by(Job.created_at.desc()).all()
     total_applications = (
-        Application.query.join(Job)
-        .filter(Job.company_id == company.id)
-        .count()
+        Application.query.join(Job).filter(Job.company_id == company.id).count()
     )
     pending_applications = (
         Application.query.join(Job)
-        .filter(
-            Job.company_id == company.id,
-            Application.status == "pending",
-        )
+        .filter(Job.company_id == company.id, Application.status == "pending")
         .count()
     )
 
@@ -70,16 +69,22 @@ def recruiter_dashboard():
     )
 
 
+# ============================================================
+# GET COMPANY
+# ============================================================
 @recruiter_bp.get("/recruiter/company")
 @jwt_required()
 def get_company():
     """
-    Get recruiter company profile
+    Get recruiter’s company profile
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    responses:
+      200:
+        description: Company profile returned
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -92,6 +97,9 @@ def get_company():
     return jsonify({"ok": True, "company": user.company.to_dict()})
 
 
+# ============================================================
+# CREATE COMPANY
+# ============================================================
 @recruiter_bp.post("/recruiter/company")
 @jwt_required()
 def create_company():
@@ -102,6 +110,28 @@ def create_company():
       - Recruiter
     security:
       - Bearer: []
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            name: {type: string}
+            website: {type: string}
+            description: {type: string}
+            logo_url: {type: string}
+            company_type: {type: string}
+            treasury_address: {type: string}
+            token_symbol: {type: string}
+            founded_year: {type: integer}
+            team_size: {type: integer}
+            location: {type: string}
+    responses:
+      201:
+        description: Company created
+      403:
+        description: Forbidden
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -109,7 +139,6 @@ def create_company():
         return guard
 
     if user.company:
-        # Вже є компанія — можна редіректити на edit
         return jsonify({"ok": True, "redirect": "/recruiter/company/edit"})
 
     data = request.get_json(force=True) or {}
@@ -128,24 +157,37 @@ def create_company():
     )
     db.session.add(company)
     db.session.commit()
+
     return (
-        jsonify(
-            {"ok": True, "message": "Компанію створено", "company": company.to_dict()}
-        ),
+        jsonify({"ok": True, "message": "Компанію створено", "company": company.to_dict()}),
         201,
     )
 
 
+# ============================================================
+# EDIT COMPANY
+# ============================================================
 @recruiter_bp.put("/recruiter/company/edit")
 @jwt_required()
 def edit_company():
     """
-    Edit company profile
+    Update company profile
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    parameters:
+      - name: body
+        in: body
+        schema:
+          type: object
+          description: Fields to update
+    responses:
+      200:
+        description: Company updated
+      404:
+        description: Company not found
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -154,16 +196,7 @@ def edit_company():
 
     company = user.company
     if not company:
-        return (
-            jsonify(
-                {
-                    "ok": False,
-                    "error": "not_found",
-                    "message": "Компанії немає.",
-                }
-            ),
-            404,
-        )
+        return jsonify({"ok": False, "error": "not_found"}), 404
 
     data = request.get_json(force=True) or {}
     for field in [
@@ -184,21 +217,34 @@ def edit_company():
         company.founded_year = data["founded_year"]
 
     db.session.commit()
-    return jsonify(
-        {"ok": True, "message": "Компанію оновлено", "company": company.to_dict()}
-    )
+    return jsonify({"ok": True, "message": "Компанію оновлено", "company": company.to_dict()})
 
 
+# ============================================================
+# JOB APPLICATIONS
+# ============================================================
 @recruiter_bp.get("/recruiter/job/<int:job_id>/applications")
 @jwt_required()
 def job_applications(job_id):
     """
-    Get applications for a job
+    Get all applications for a specific job
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    parameters:
+      - name: job_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Applications returned
+      403:
+        description: Forbidden
+      404:
+        description: Job not found
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -209,11 +255,7 @@ def job_applications(job_id):
     if job.company.recruiter_id != user.id and user.role != "admin":
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
-    apps = (
-        Application.query.filter_by(job_id=job_id)
-        .order_by(Application.applied_at.desc())
-        .all()
-    )
+    apps = Application.query.filter_by(job_id=job_id).order_by(Application.applied_at.desc()).all()
     return jsonify(
         {
             "ok": True,
@@ -223,16 +265,40 @@ def job_applications(job_id):
     )
 
 
+# ============================================================
+# UPDATE APPLICATION
+# ============================================================
 @recruiter_bp.put("/recruiter/application/<int:app_id>/update")
 @jwt_required()
 def update_application(app_id):
     """
-    Update application status/notes
+    Update application status or recruiter notes
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    parameters:
+      - name: app_id
+        in: path
+        type: integer
+        required: true
+      - name: body
+        in: body
+        schema:
+          type: object
+          properties:
+            status:
+              type: string
+            recruiter_notes:
+              type: string
+    responses:
+      200:
+        description: Application updated
+      403:
+        description: Forbidden
+      404:
+        description: Application not found
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
@@ -251,31 +317,41 @@ def update_application(app_id):
 
     db.session.commit()
     return jsonify(
-        {
-            "ok": True,
-            "message": "Статус оновлено",
-            "application": application.to_dict(),
-        }
+        {"ok": True, "message": "Статус оновлено", "application": application.to_dict()}
     )
 
 
+# ============================================================
+# VIEW CANDIDATE PROFILE
+# ============================================================
 @recruiter_bp.get("/recruiter/candidate/<int:user_id>")
 @jwt_required()
 def recruiter_candidate(user_id):
     """
-    Get candidate profile (for recruiter)
+    Get candidate profile (only if the candidate applied to recruiter’s jobs)
     ---
     tags:
       - Recruiter
     security:
       - Bearer: []
+    parameters:
+      - name: user_id
+        in: path
+        type: integer
+        required: true
+    responses:
+      200:
+        description: Candidate profile returned
+      403:
+        description: Forbidden
+      404:
+        description: Candidate not found
     """
     user = current_user_jwt()
     guard = recruiter_guard(user)
     if guard:
         return guard
 
-    # доступ тільки якщо кандидат подавався на вакансії цього рекрутера
     applied = (
         db.session.query(Application)
         .join(Job, Application.job_id == Job.id)
@@ -297,9 +373,7 @@ def recruiter_candidate(user_id):
         "location": getattr(profile, "location", None),
         "github": getattr(profile, "github", None),
         "linkedin": getattr(profile, "linkedin", None),
-        # API повертає "portfolio", а в моделі, скоріш за все, поле portfolio_url
         "portfolio": getattr(profile, "portfolio_url", None),
-        # React очікує рядок (потім .split(',')), тому лишаємо текст
         "skills": getattr(profile, "skills", None) or "",
         "bio": getattr(profile, "bio", None),
     }

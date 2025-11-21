@@ -1,7 +1,7 @@
 import os
 from datetime import timedelta
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, Response
 from flask_cors import CORS
 from flasgger import Swagger
 from flask_jwt_extended import JWTManager
@@ -55,7 +55,6 @@ def create_app():
             }
         },
     }
-    Swagger(app, template=swagger_template)
 
     app.config["GOOGLE_CLIENT_ID"] = os.getenv("GOOGLE_CLIENT_ID")
 
@@ -64,6 +63,83 @@ def create_app():
         db.create_all()
 
     jwt = JWTManager(app)
+
+    @app.get("/about")
+    def about_page():
+        html = """
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8" />
+            <title>About – web3jobs</title>
+            <style>
+                body {
+                    font-family: Arial, sans-serif;
+                    margin: 40px auto;
+                    max-width: 700px;
+                    line-height: 1.6;
+                    color: #111;
+                }
+                h1 {
+                    font-size: 32px;
+                    margin-bottom: 10px;
+                }
+                h2 {
+                    margin-top: 32px;
+                }
+                ul {
+                    margin-top: 10px;
+                }
+                .section {
+                    margin-bottom: 24px;
+                }
+                .badge {
+                    display: inline-block;
+                    background: #6366f1;
+                    color: white;
+                    padding: 4px 10px;
+                    border-radius: 6px;
+                    font-size: 12px;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>About web3jobs</h1>
+            <p>
+                <span class="badge">v1.0</span>
+            </p>
+            <div class="section">
+                <p>
+                    Web3Jobs is a decentralized job platform built for blockchain developers,
+                    recruiters, and DAO communities.  
+                    It provides authentication via Web2 (Google) and Web3 (SIWE wallet login),
+                    analytics dashboards, company management, and job publishing tools.
+                </p>
+            </div>
+
+            <h2>Main Features</h2>
+            <ul>
+                <li>JWT Authentication</li>
+                <li>Google OAuth2 Sign-In</li>
+                <li>Wallet login (SIWE / EVM)</li>
+                <li>Recruiter dashboard & company profiles</li>
+                <li>Admin analytics with charts</li>
+                <li>REST API for jobs, companies, users</li>
+            </ul>
+
+            <h2>Developer</h2>
+            <p>Created by: <strong>Sasha (web3jobs)</strong></p>
+
+            <h2>Project Goal</h2>
+            <p>
+                Build a next-generation Web3 job marketplace where users control their identity,
+                recruiters manage decentralized profiles, and companies publish jobs in a modern,
+                scalable way.
+            </p>
+        </body>
+        </html>
+        """
+        return Response(html, mimetype="text/html")
 
     # -------- Error handlers --------
     @app.errorhandler(400)
@@ -141,6 +217,9 @@ def create_app():
     app.register_blueprint(recruiter_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(stats_bp)
+
+    Swagger(app, template=swagger_template)
+
 
     return app
 
