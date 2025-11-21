@@ -21,13 +21,17 @@ def jobs_monthly():
             month_trunc.label("month"),
             func.count(Job.id).label("count")
         )
+        .filter(Job.created_at.isnot(None))
         .group_by(month_trunc)
         .order_by(month_trunc)
         .all()
     )
 
     return jsonify([
-        {"month": row.month.strftime("%Y-%m"), "count": row.count}
+        {
+            "month": row.month.strftime("%Y-%m"),
+            "count": row.count
+        }
         for row in rows
     ])
 
@@ -79,18 +83,24 @@ def jobs_active():
 # -------------------------
 @stats_bp.get("/stats/applications/daily")
 def applications_daily():
+    day_trunc = func.date_trunc("day", Application.applied_at)
+
     rows = (
         db.session.query(
-            func.date_trunc("day", Application.applied_at).label("day"),
+            day_trunc.label("day"),
             func.count(Application.id).label("count")
         )
-        .group_by(func.date_trunc("day", Application.applied_at))
-        .order_by(func.date_trunc("day", Application.applied_at))
+        .filter(Application.applied_at.isnot(None))
+        .group_by(day_trunc)
+        .order_by(day_trunc)
         .all()
     )
 
     return jsonify([
-        {"day": row.day.strftime("%Y-%m-%d"), "count": row.count}
+        {
+            "day": row.day.strftime("%Y-%m-%d") if row.day else None,
+            "count": row.count
+        }
         for row in rows
     ])
 
@@ -147,18 +157,24 @@ def apps_by_company():
 # -------------------------
 @stats_bp.get("/stats/users/monthly")
 def users_monthly():
+    month_trunc = func.date_trunc("month", User.created_at)
+
     rows = (
         db.session.query(
-            func.date_trunc("month", User.created_at).label("month"),
+            month_trunc.label("month"),
             func.count(User.id).label("count")
         )
-        .group_by(func.date_trunc("month", User.created_at))
-        .order_by(func.date_trunc("month", User.created_at))
+        .filter(User.created_at.isnot(None))
+        .group_by(month_trunc)
+        .order_by(month_trunc)
         .all()
     )
 
     return jsonify([
-        {"month": row.month.strftime("%Y-%m"), "count": row.count}
+        {
+            "month": row.month.strftime("%Y-%m") if row.month else None,
+            "count": row.count
+        }
         for row in rows
     ])
 
