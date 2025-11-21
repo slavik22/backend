@@ -21,7 +21,7 @@ def jobs_monthly():
             month_trunc.label("month"),
             func.count(Job.id).label("count")
         )
-        .filter(Job.created_at.isnot(None))
+        .filter(Job.created_at.isnot(None))  # This should filter out None, but add check anyway
         .group_by(month_trunc)
         .order_by(month_trunc)
         .all()
@@ -29,11 +29,12 @@ def jobs_monthly():
 
     return jsonify([
         {
-            "month": row.month.strftime("%Y-%m"),
+            "month": row.month.strftime("%Y-%m") if row.month else None,  # Add None check
             "count": row.count
         }
         for row in rows
     ])
+
 
 @stats_bp.get("/stats/jobs/by-company")
 def jobs_by_company():
@@ -90,13 +91,14 @@ def applications_daily():
             day_trunc.label("day"),
             func.count(Application.id).label("count")
         )
+        .filter(Application.applied_at.isnot(None))  # Add filter for None dates
         .group_by(day_trunc)
         .order_by(day_trunc)
         .all()
     )
 
     return jsonify([
-        {"day": row.day.strftime("%Y-%m-%d"), "count": row.count}
+        {"day": row.day.strftime("%Y-%m-%d") if row.day else None, "count": row.count}  # Add None check
         for row in rows
     ])
 
