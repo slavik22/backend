@@ -90,17 +90,13 @@ def applications_daily():
             day_trunc.label("day"),
             func.count(Application.id).label("count")
         )
-        .filter(Application.applied_at.isnot(None))
         .group_by(day_trunc)
         .order_by(day_trunc)
         .all()
     )
 
     return jsonify([
-        {
-            "day": row.day.strftime("%Y-%m-%d") if row.day else None,
-            "count": row.count
-        }
+        {"day": row.day.strftime("%Y-%m-%d"), "count": row.count}
         for row in rows
     ])
 
