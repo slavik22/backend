@@ -14,13 +14,15 @@ stats_bp = Blueprint("stats", __name__)
 # -------------------------
 @stats_bp.get("/stats/jobs/monthly")
 def jobs_monthly():
+    month_trunc = func.date_trunc("month", Job.created_at)
+
     rows = (
         db.session.query(
-            func.date_trunc("month", Job.created_at).label("month"),
+            month_trunc.label("month"),
             func.count(Job.id).label("count")
         )
-        .group_by(func.date_trunc("month", Job.created_at))
-        .order_by(func.date_trunc("month", Job.created_at))
+        .group_by(month_trunc)
+        .order_by(month_trunc)
         .all()
     )
 
