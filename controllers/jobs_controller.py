@@ -41,10 +41,6 @@ def jobs_list():
         in: query
         type: boolean
         description: Only DAO jobs
-      - name: blockchain
-        in: query
-        type: string
-        description: Blockchain (Ethereum, Polygon, Solana)
     responses:
       200:
         description: List of jobs

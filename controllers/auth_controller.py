@@ -1,3 +1,5 @@
+import re
+
 from flask import Blueprint, jsonify, request, session
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -13,14 +15,17 @@ from helpers import auth_payload, user_min_dict, current_user_jwt
 from google.oauth2 import id_token
 from google.auth.transport import requests as google_requests
 from flask import current_app as app
+from sqlalchemy.exc import IntegrityError
 
 
 auth_bp = Blueprint("auth", __name__)
+EMAIL_REGEX = r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$"
 
 
 # ================================
 # REGISTER
 # ================================
+
 @auth_bp.post("/auth/register")
 def auth_register():
     """
@@ -28,7 +33,14 @@ def auth_register():
     ---
     tags:
       - Auth
-    description: Create a new user account using email and password.
+    summary: Create a new user account
+    description: >
+      Створює нового користувача за email і паролем.
+      Валідує email, пароль, роль і Ethereum-адресу.
+
+    consumes:
+      - application/json
+
     parameters:
       - in: body
         name: body
@@ -41,48 +53,158 @@ def auth_register():
           properties:
             email:
               type: string
+              description: Valid email
+              example: "test@example.com"
             password:
               type: string
+              description: Password (min 6 chars)
+              example: "MySecret123"
             role:
               type: string
               enum: ["user", "recruiter"]
+              example: "user"
             wallet_address:
               type: string
+              example: "0x742d35Cc6634C0532925a3b844Bc454e4438f44e"
+
     responses:
       201:
         description: User registered successfully
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+            access_token:
+              type: string
+            refresh_token:
+              type: string
+            user:
+              type: object
+              properties:
+                id:
+                  type: integer
+                email:
+                  type: string
+                role:
+                  type: string
+                wallet_address:
+                  type: string
+
       400:
-        description: Missing required data
+        description: Validation error
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+            error:
+              type: string
+            message:
+              type: string
+
       409:
-        description: Email already exists
+        description: Email or wallet already registered
+        schema:
+          type: object
+          properties:
+            ok:
+              type: boolean
+              example: False
+            error:
+              type: string
+              example: "email_exists"
+            message:
+              type: string
+              example: "Email вже зареєстрований"
     """
     data = request.get_json(force=True) or {}
-    email = data.get("email")
-    password = data.get("password")
+
+    email = (data.get("email") or "").strip().lower()
+    password = (data.get("password") or "").strip()
     role = data.get("role", "user")
-    wallet = data.get("wallet_address")
+    wallet = (data.get("wallet_address") or "").strip()
 
+    # 1. Basic required fields
     if not email or not password:
-        return jsonify({"ok": False, "error": "invalid_data"}), 400
+        return jsonify({"ok": False, "error": "invalid_data",
+                        "message": "Email і пароль обов'язкові"}), 400
 
+    # 2. Email format validation
+    if not re.match(EMAIL_REGEX, email):
+        return jsonify({"ok": False, "error": "invalid_email",
+                        "message": "Невірний формат email"}), 400
+
+    # 3. Password validation
+    if len(password) < 6:
+        return jsonify({"ok": False, "error": "weak_password",
+                        "message": "Пароль має бути мінімум 6 символів"}), 400
+
+    # 4. Role validation
+    if role not in ["user", "recruiter"]:
+        return jsonify({"ok": False, "error": "invalid_role"}), 400
+
+    # 5. Wallet validation (optional)
+    if wallet:
+        try:
+            wallet = to_checksum_address(wallet)
+        except Exception:
+            return jsonify({"ok": False, "error": "invalid_wallet",
+                            "message": "Невірний формат Ethereum адреси"}), 400
+
+        # ✅ Перевірка унікальності гаманця
+        if User.query.filter_by(wallet_address=wallet).first():
+            return jsonify({
+                "ok": False,
+                "error": "wallet_exists",
+                "message": "Ця Ethereum адреса вже прив'язана до іншого акаунта",
+            }), 409
+
+    # 6. Check email existence
     if User.query.filter_by(email=email).first():
-        return jsonify({"ok": False, "error": "exists"}), 409
+        return jsonify({
+            "ok": False,
+            "error": "email_exists",
+            "message": "Email вже зареєстрований",
+        }), 409
 
-    user = User()
-    user.email = email
-    user.password_hash = generate_password_hash(password, method="pbkdf2:sha256")
-    user.role = role
-    user.wallet_address = wallet or None
+    # 7. Create user
+    user = User(
+        email=email,
+        password_hash=generate_password_hash(password, method="pbkdf2:sha256"),
+        role=role,
+        wallet_address=wallet or None,
+    )
 
     db.session.add(user)
-    db.session.commit()
 
+    try:
+        db.session.commit()
+    except IntegrityError as e:
+        db.session.rollback()
+        # На випадок race conditions або якщо щось пропустили в перевірках
+        msg = str(e.orig)
+        if "users_wallet_address_key" in msg:
+            return jsonify({
+                "ok": False,
+                "error": "wallet_exists",
+                "message": "Ця Ethereum адреса вже прив'язана до іншого акаунта",
+            }), 409
+        if "users_email_key" in msg:
+            return jsonify({
+                "ok": False,
+                "error": "email_exists",
+                "message": "Email вже зареєстрований",
+            }), 409
+        # якщо причина інша — нехай впаде далі
+        raise
+
+    # Create empty profile
     profile = UserProfile(user_id=user.id)
     db.session.add(profile)
     db.session.commit()
 
     return jsonify({"ok": True, **auth_payload(user)}), 201
-
 
 # ================================
 # LOGIN
